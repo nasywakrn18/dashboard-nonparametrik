@@ -217,7 +217,123 @@ ui <- dashboardPage(
   )
 )
 
-server <- function(input, output, session){
+server <- function(input, output, session){  # ---- 1. Load Data ----
+  raw_data <- reactive({
+    req(input$file)
+    ext <- tolower(tools::file_ext(input$file$name))
+    tryCatch({
+      if (ext == "csv") {
+        read.csv(input$file$datapath, stringsAsFactors = FALSE)
+      } else if (ext %in% c("xlsx", "xls")) {
+        as.data.frame(readxl::read_excel(input$file$datapath))
+      } else {
+        showNotification("Format tidak didukung. Gunakan CSV / Excel.", type = "error")
+        NULL
+      }
+    }, error = function(e) {
+      showNotification(paste("Gagal membaca file:", e$message), type = "error")
+      NULL
+    })
+  })
+  
+  # ---- 2. Pilihan Metode Uji Berdasarkan Tujuan & Sampel ----
+  observe({
+    req(input$tujuan_analisis, input$jumlah_sampel)
+    tujuan <- input$tujuan_analisis
+    sampel <- input$jumlah_sampel
+    
+    uji_choices <- c()
+    if (tujuan == "Uji Perbedaan") {
+      if (sampel == "1 Sampel") {
+        uji_choices <- c("Wilcoxon One Sample", "Runs Test (Wald-Wolfowitz)")
+      } else if (sampel == "2 Sampel Independen") {
+        uji_choices <- c("Mann-Whitney U Test")
+      } else if (sampel == "2 Sampel Berpasangan") {
+        uji_choices <- c("Wilcoxon Signed-Rank (Paired)*")
+      } else if (sampel == "K Sampel Independen") {
+        uji_choices <- c("Kruskal-Wallis Test")
+      } else if (sampel == "K Sampel Berpasangan") {
+        uji_choices <- c("Friedman Test*")
+      }
+    } else if (tujuan == "Uji Hubungan/Korelasi") {
+      uji_choices <- c("Spearman Rank Correlation", "Kendall's Tau Correlation")
+    }
+    updateSelectInput(session, "metode_uji", choices = uji_choices)
+  })
+  
+  # ---- 3. Render Input Pemilihan Variabel Secara Dinamis ----
+  output$dynamic_variables_ui <- renderUI({
+    req(raw_data())
+    cols <- names(raw_data())
+    num_cols <- cols[sapply(raw_data(), function(x) is.numeric(x) || suppressWarnings(!all(is.na(as.numeric(x)))))]
+    
+    tujuan <- input$tujuan_analisis
+    sampel <- input$jumlah_sampel
+    
+    if (tujuan == "Uji Hubungan/Korelasi") {
+      tagList(
+        selectInput("var_x_num", "Variabel X (Numerik):", choices = num_cols, selected = num_cols[1]),
+        selectInput("var_y_num", "Variabel Y (Numerik):", choices = num_cols, selected = if(length(num_cols) > 1) num_cols[2] else num_cols[1])
+      )
+    } else { # Uji Perbedaan
+      if (sampel == "1 Sampel") {
+        tagList(
+          selectInput("var_y_one", "Variabel Uji (Y - Numerik):", choices = num_cols, selected = num_cols[1])
+        )
+      } else if (sampel %in% c("2 Sampel Independen", "K Sampel Independen")) {
+        tagList(
+          selectInput("var_group_ind", "Variabel Grup / Kategori (X):", choices = cols, selected = cols[1]),
+          selectInput("var_value_ind", "Variabel Nilai / Respon (Y):", choices = num_cols, selected = num_cols[1])
+        )
+      } else if (sampel == "2 Sampel Berpasangan") {
+        tagList(
+          selectInput("var_y1_paired", "Variabel Sampel 1 / Sebelum (Y1):", choices = num_cols, selected = num_cols[1]),
+          selectInput("var_y2_paired", "Variabel Sampel 2 / Sesudah (Y2):", choices = num_cols, selected = if(length(num_cols) > 1) num_cols[2] else num_cols[1])
+        )
+      } else if (sampel == "K Sampel Berpasangan") {
+        tagList(
+          selectizeInput("var_k_paired", "Pilih Komponen/Variabel (Min. 3):", choices = num_cols, multiple = TRUE)
+        )
+      }
+    }
+  })
+  
+  # ---- 4. Centralized Input Catcher ----
+  data_inputs <- reactive({
+    req(raw_data(), input$tujuan_analisis)
+    tujuan <- input$tujuan_analisis
+    sampel <- input$jumlah_sampel
+    
+    res <- list(type = NULL, x_name = NULL, y_name = NULL, y2_name = NULL, k_names = NULL)
+    
+    if (tujuan == "Uji Hubungan/Korelasi") {
+      req(input$var_x_num, input$var_y_num)
+      res$type   <- "correlation"
+      res$x_name <- input$var_x_num
+      res$y_name <- input$var_y_num
+    } else {
+      if (sampel == "1 Sampel") {
+        req(input$var_y_one)
+        res$type   <- "1-sample"
+        res$y_name <- input$var_y_one
+      } else if (sampel %in% c("2 Sampel Independen", "K Sampel Independen")) {
+        req(input$var_group_ind, input$var_value_ind)
+        res$type   <- "independent"
+        res$x_name <- input$var_group_ind
+        res$y_name <- input$var_value_ind
+      } else if (sampel == "2 Sampel Berpasangan") {
+        req(input$var_y1_paired, input$var_y2_paired)
+        res$type    <- "paired-2"
+        res$y_name  <- input$var_y1_paired
+        res$y2_name <- input$var_y2_paired
+      } else if (sampel == "K Sampel Berpasangan") {
+        req(input$var_k_paired)
+        res$type    <- "paired-k"
+        res$k_names <- input$var_k_paired
+      }
+    }
+    return(res)
+  })
   
 }
 
