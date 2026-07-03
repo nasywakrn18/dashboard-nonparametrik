@@ -339,7 +339,63 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
     }
     return(res)
   })
+ 
+  # ---- 5. Data Table Preview ----
+  output$data_table <- renderDT({
+    req(raw_data())
+    datatable(raw_data(),
+              editable  = "cell", filter = "top", rownames = FALSE,
+              class     = "table table-striped table-bordered table-hover",
+              options   = list(pageLength = 10, scrollX = TRUE, autoWidth = TRUE)
+    )
+  })
   
+  # ---- 6. Descriptive Stats ----
+  output$tbl_desc <- renderTable({
+    req(raw_data(), data_inputs())
+    vars <- data_inputs()
+    y_col <- if(!is.null(vars$y_name)) vars$y_name else vars$k_names[1]
+    req(y_col)
+    
+    y <- suppressWarnings(as.numeric(raw_data()[[y_col]]))
+    y <- y[!is.na(y)]
+    if(length(y) == 0) return(NULL)
+    
+    data.frame(
+      Statistik = c("Nama Kolom", "N Observasi", "Mean", "Median", "Std. Deviasi", "Minimum", "Maksimum", "IQR"),
+      Nilai = c(y_col, length(y), round(mean(y), 4), round(median(y), 4), round(sd(y), 4), round(min(y), 4), round(max(y), 4), round(IQR(y), 4))
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  output$tbl_info <- renderTable({
+    req(raw_data(), data_inputs())
+    df <- raw_data()
+    vars <- data_inputs()
+    y_col <- if(!is.null(vars$y_name)) vars$y_name else vars$k_names[1]
+    req(y_col)
+    
+    data.frame(
+      Info  = c("Jumlah Baris", "Jumlah Kolom", "Total NA Data", "Kolom Numerik", "Tipe Var. Utama"),
+      Nilai = c(nrow(df), ncol(df), sum(is.na(df)), sum(sapply(df, is.numeric)), class(df[[y_col]]))
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE)
+  
+  output$tbl_freq <- renderTable({
+    req(raw_data(), data_inputs())
+    vars <- data_inputs()
+    if (vars$type == "independent") {
+      x <- raw_data()[[vars$x_name]]
+      if (length(unique(x)) <= 30) {
+        tbl <- as.data.frame(table(Kelompok = x))
+        tbl$Persentase <- paste0(round(tbl$Freq / sum(tbl$Freq) * 100, 1), "%")
+        names(tbl)[2] <- "Frekuensi"
+        return(tbl)
+      } else {
+        return(data.frame(Keterangan = "Terlalu banyak nilai unik (>30)"))
+      }
+    }
+    data.frame(Keterangan = "Hanya berlaku untuk sampel independen berkategori")
+  }, striped = TRUE, hover = TRUE, bordered = TRUE) 
   
   
 }
