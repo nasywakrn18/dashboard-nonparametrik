@@ -1,5 +1,10 @@
 library(shiny)
 library(shinydashboard)
+library(DT)
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
 
 theme_custom <- function() {
   theme_minimal(base_size = 12) +
@@ -334,6 +339,8 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
     }
     return(res)
   })
+  
+  
   
 }
 
