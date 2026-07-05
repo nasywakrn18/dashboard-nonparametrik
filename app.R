@@ -706,4 +706,5 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
   
 }
 
-shinyApp(ui, server)
+# ==================== RUN ====================
+shinyApp(ui = ui, server = server)
