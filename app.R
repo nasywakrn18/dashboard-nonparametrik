@@ -397,7 +397,133 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
     data.frame(Keterangan = "Hanya berlaku untuk sampel independen berkategori")
   }, striped = TRUE, hover = TRUE, bordered = TRUE) 
   
-  
+  # ---- 7. Run Selected Non-Parametric Test ----
+  test_res <- eventReactive(input$run_test, {
+    req(raw_data(), data_inputs(), input$metode_uji)
+    
+    vars   <- data_inputs()
+    df     <- raw_data()
+    alpha  <- as.numeric(input$alpha)
+    metode <- input$metode_uji
+    results <- list()
+    
+    if (vars$type == "1-sample") {
+      y <- suppressWarnings(as.numeric(df[[vars$y_name]]))
+      y <- y[!is.na(y)]
+      
+      if (metode == "Wilcoxon One Sample") {
+        t <- tryCatch(wilcox.test(y, mu = 0, exact = FALSE), error = function(e) NULL)
+        if (!is.null(t)) {
+          results[["Wilcoxon One Sample"]] <- list(
+            stat = as.numeric(t$statistic), stat_label = paste0("V = ", round(as.numeric(t$statistic), 3)),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = "Median populasi = 0", h1 = "Median populasi ≠ 0",
+            extra = paste0("n = ", length(y), " | Median sampel = ", round(median(y), 4))
+          )
+        }
+      } else if (metode == "Runs Test (Wald-Wolfowitz)") {
+        med <- median(y); above <- as.integer(y >= med)
+        n1 <- sum(above == 1); n2 <- sum(above == 0); R <- length(rle(above)$lengths)
+        mu_R <- (2 * n1 * n2) / (n1 + n2) + 1
+        var_R <- (2*n1*n2*(2*n1*n2 - n1 - n2)) / ((n1+n2)^2 * (n1+n2-1))
+        z_stat <- if(var_R > 0) (R - mu_R) / sqrt(var_R) else 0
+        p_val <- 2 * pnorm(-abs(z_stat))
+        results[["Runs Test (Wald-Wolfowitz)"]] <- list(
+          stat = round(z_stat, 4), stat_label = paste0("Z = ", round(z_stat, 3), " | Runs (R) = ", R),
+          p_value = p_val, sig = p_val < alpha,
+          h0 = "Urutan data bersifat acak (random)", h1 = "Urutan data tidak bersifat acak",
+          extra = paste0("n₁ = ", n1, ", n₂ = ", n2, " | E[R] = ", round(mu_R, 2))
+        )
+      }
+    } else if (vars$type == "independent") {
+      x_raw <- df[[vars$x_name]]; y_raw <- suppressWarnings(as.numeric(df[[vars$y_name]]))
+      ok <- !is.na(y_raw) & !is.na(x_raw); x <- x_raw[ok]; y <- y_raw[ok]
+      grp <- as.factor(x); grp_lvls <- levels(grp); grp_list <- split(y, grp)
+      
+      if (metode == "Mann-Whitney U Test" && length(grp_lvls) == 2) {
+        t <- tryCatch(wilcox.test(grp_list[[1]], grp_list[[2]], exact = FALSE), error = function(e) NULL)
+        if (!is.null(t)) {
+          eff <- abs(qnorm(t$p.value / 2)) / sqrt(length(y))
+          results[["Mann-Whitney U"]] <- list(
+            stat = as.numeric(t$statistic), stat_label = paste0("W = ", round(as.numeric(t$statistic), 3)),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = paste0("Distribusi '", grp_lvls[1], "' = '", grp_lvls[2], "'"),
+            h1 = paste0("Distribusi '", grp_lvls[1], "' ≠ '", grp_lvls[2], "'"),
+            extra = paste0("n₁=", length(grp_list[[1]]), ", n₂=", length(grp_list[[2]]), " | Effect size r ≈ ", round(eff, 3))
+          )
+        }
+      } else if (metode == "Kruskal-Wallis Test") {
+        t <- tryCatch(kruskal.test(y ~ grp), error = function(e) NULL)
+        if (!is.null(t)) {
+          results[["Kruskal-Wallis"]] <- list(
+            stat = as.numeric(t$statistic), stat_label = paste0("H = ", round(as.numeric(t$statistic), 3), ", df = ", t$parameter),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = "Semua kelompok berasal dari distribusi yang sama", h1 = "Setidaknya satu kelompok berbeda distribusinya",
+            extra = paste0("k = ", length(grp_lvls), " kelompok | n = ", length(y))
+          )
+        }
+      }
+    } else if (vars$type == "paired-2") {
+      y1 <- suppressWarnings(as.numeric(df[[vars$y_name]])); y2 <- suppressWarnings(as.numeric(df[[vars$y2_name]]))
+      ok <- !is.na(y1) & !is.na(y2); y1 <- y1[ok]; y2 <- y2[ok]
+      
+      if (metode == "Wilcoxon Signed-Rank (Paired)*") {
+        t <- tryCatch(wilcox.test(y1, y2, paired = TRUE, exact = FALSE), error = function(e) NULL)
+        if (!is.null(t)) {
+          results[["Wilcoxon Paired Signed-Rank"]] <- list(
+            stat = as.numeric(t$statistic), stat_label = paste0("V = ", round(as.numeric(t$statistic), 3)),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = "Tidak ada perbedaan median (Sampel 1 = Sampel 2)", h1 = "Terdapat perbedaan median secara berpasangan",
+            extra = paste0("n = ", length(y1), " pasang observasi lengkap")
+          )
+        }
+      }
+    } else if (vars$type == "paired-k") {
+      if (metode == "Friedman Test*" && length(vars$k_names) >= 3) {
+        mat <- do.call(cbind, lapply(vars$k_names, function(nm) suppressWarnings(as.numeric(df[[nm]]))))
+        ok <- complete.cases(mat); mat <- mat[ok, ]
+        if (nrow(mat) > 1) {
+          t <- tryCatch(friedman.test(mat), error = function(e) NULL)
+          if (!is.null(t)) {
+            results[["Friedman Test"]] <- list(
+              stat = as.numeric(t$statistic), stat_label = paste0("Chi-sq = ", round(as.numeric(t$statistic), 3), ", df = ", t$parameter),
+              p_value = t$p.value, sig = t$p.value < alpha,
+              h0 = "Seluruh kelompok sampel berpasangan memiliki distribusi yang identik", h1 = "Setidaknya satu kelompok berpasangan berbeda",
+              extra = paste0("k = ", ncol(mat), " kolom | n = ", nrow(mat), " baris blok lengkap")
+            )
+          }
+        }
+      }
+    } else if (vars$type == "correlation") {
+      x2 <- suppressWarnings(as.numeric(df[[vars$x_name]])); y2 <- suppressWarnings(as.numeric(df[[vars$y_name]]))
+      ok <- !is.na(x2) & !is.na(y2); x2 <- x2[ok]; y2 <- y2[ok]
+      
+      if (metode == "Spearman Rank Correlation") {
+        t <- tryCatch(cor.test(x2, y2, method = "spearman", exact = FALSE), error = function(e) NULL)
+        if (!is.null(t)) {
+          rho <- as.numeric(t$estimate)
+          results[["Spearman Correlation"]] <- list(
+            stat = rho, stat_label = paste0("ρ = ", round(rho, 4)),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = "Tidak ada hubungan monoton (ρ = 0)", h1 = "Terdapat korelasi monoton (ρ ≠ 0)",
+            extra = paste0("Arah hubungan: ", if (rho >= 0) "Positif (+)" else "Negatif (−)")
+          )
+        }
+      } else if (metode == "Kendall's Tau Correlation") {
+        t <- tryCatch(cor.test(x2, y2, method = "kendall", exact = FALSE), error = function(e) NULL)
+        if (!is.null(t)) {
+          tau <- as.numeric(t$estimate)
+          results[["Kendall's Tau"]] <- list(
+            stat = tau, stat_label = paste0("τ = ", round(tau, 4)),
+            p_value = t$p.value, sig = t$p.value < alpha,
+            h0 = "Tidak ada asosiasi ordinal (τ = 0)", h1 = "Terdapat asosiasi ordinal (τ ≠ 0)",
+            extra = paste0("Tipe pasangan data: ", if (tau >= 0) "Concordant (+)" else "Discordant (−)")
+          )
+        }
+      }
+    }
+    list(results = results, alpha = alpha, vars = vars, metode = metode)
+  })  
 }
 
 shinyApp(ui, server)
