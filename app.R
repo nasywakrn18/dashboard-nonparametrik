@@ -610,7 +610,100 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
       geom_errorbar(aes(ymin = mn - sd, ymax = mn + sd), width = 0.2, linewidth = 0.8) +
       geom_point(aes(y = med), shape = 23, size = 4, fill = "white") +
       scale_fill_brewer(palette = "Set3") + labs(title = "Mean ± 1 SD (♦ = Median)", x = "Grup", y = "Mean / Rata-rata") + theme_custom()
-  })  
+  }) 
+  # ---- 10. Summary Table ----
+  output$tbl_summary <- renderTable({
+    req(test_res())
+    res <- test_res()$results; alpha <- test_res()$alpha
+    if (length(res) == 0) return(data.frame(Keterangan = "Uji gagal dieksekusi. Periksa kecocokan data dengan syarat uji."))
+    
+    data.frame(
+      `Nama Uji`     = names(res), `Statistik` = sapply(res, function(r) r$stat_label),
+      `P-Value`      = sapply(res, function(r) formatC(r$p_value, format = "e", digits = 4)), `α` = alpha,
+      `Signifikan?`  = sapply(res, function(r) if (r$sig) "Ya ✅"  else "Tidak ❌"),
+      `Keputusan H₀` = sapply(res, function(r) if (r$sig) "Tolak H₀" else "Gagal Tolak H₀"), check.names = FALSE
+    )
+  }, striped = TRUE, hover = TRUE, bordered = TRUE, width = "100%")
+  
+  # ---- 11. Test Cards & Detailed Conclusions ----
+  output$ui_test_cards <- renderUI({
+    req(test_res())
+    res <- test_res()$results; alpha <- test_res()$alpha
+    if (length(res) == 0) return(div(class = "alert alert-danger", "Tidak ada hasil uji statistik yang valid untuk ditampilkan."))
+    
+    cards <- lapply(names(res), function(nm) {
+      r <- res[[nm]]; cls <- if (r$sig) "card-sig" else "card-not"
+      verd <- if (r$sig) "✅  SIGNIFIKAN — Tolak Hipotesis Nol (H₀)" else "❌  TIDAK SIGNIFIKAN — Gagal Menolak Hipotesis Nol (H₀)"
+      vcls <- if (r$sig) "verdict-sig" else "verdict-not"
+      
+      div(class = cls, h4(style = "margin-top:0; color:#1a2e4a;", paste0("🔬 ", nm)),
+          tags$table(class = "stat-table",
+                     tags$tr(tags$th("Parameter"), tags$th("Nilai")),
+                     tags$tr(tags$td("Statistik Uji"), tags$td(r$stat_label)),
+                     tags$tr(tags$td("P-Value"),       tags$td(formatC(r$p_value, format = "e", digits = 4))),
+                     tags$tr(tags$td("Alpha (α)"),     tags$td(alpha)),
+                     tags$tr(tags$td("H₀"),            tags$td(r$h0)),
+                     tags$tr(tags$td("H₁"),            tags$td(r$h1)),
+                     tags$tr(tags$td("Keterangan"),    tags$td(r$extra))
+          ),
+          div(class = vcls, style = "margin-top:12px; font-size:15px;", verd)
+      )
+    })
+    do.call(tagList, cards)
+  })
+  
+  output$ui_conclusions <- renderUI({
+    req(test_res())
+    res <- test_res()$results; alpha <- test_res()$alpha; metode <- test_res()$metode
+    
+    hdr <- div(class = "card-info", h4("ℹ️ Informasi Hasil Akhir Analisis", style = "margin-top:0;"),
+               tags$table(class = "stat-table",
+                          tags$tr(tags$th("Parameter"), tags$th("Nilai")),
+                          tags$tr(tags$td("Metode Uji"), tags$td(metode)),
+                          tags$tr(tags$td("Tingkat Signifikansi α"), tags$td(alpha))
+               )
+    )
+    if (length(res) == 0) return(tagList(hdr, div(class = "alert alert-warning", "Belum ada uji statistik yang berhasil dikalkulasi.")))
+    
+    make_conclusion <- function(nm, r) {
+      if (r$sig) {
+        switch(nm,
+               "Mann-Whitney U" = paste("Terdapat perbedaan distribusi peringkat data yang signifikan antar kedua kelompok independen (p < α)."),
+               "Wilcoxon One Sample" = paste("Terdapat bukti signifikan bahwa median sampel populasi tidak sama dengan nol (p < α)."),
+               "Wilcoxon Paired Signed-Rank" = paste("Terdapat perbedaan signifikan yang konsisten secara berpasangan antara nilai pengukuran ke-1 dan ke-2 (p < α)."),
+               "Friedman Test" = paste("Terdapat perbedaan efek perlakuan berpasangan yang signifikan secara statistik di antara kelompok yang diuji (p < α)."),
+               "Spearman Correlation" = paste("Terdapat hubungan korelasi monoton yang bermakna secara statistik (p < α)."),
+               "Kruskal-Wallis" = paste("Terdapat perbedaan bermakna pada minimal salah satu kelompok sampel independen yang dibandingkan (p < α)."),
+               "Kendall's Tau" = paste("Terdapat tingkat asosiasi peringkat ordinal yang signifikan di dalam pasangan data (p < α)."),
+               "Runs Test (Wald-Wolfowitz)" = paste("Urutan susunan data terbukti tidak bersifat acak secara statistik (p < α). Ada indikasi pola sistematik."),
+               "Hasil signifikan."
+        )
+      } else {
+        switch(nm,
+               "Mann-Whitney U" = paste("Tidak ditemukan perbedaan distribusi bermakna. Kedua kelompok independen dianggap identik (p ≥ α)."),
+               "Wilcoxon One Sample" = paste("Data sampel konsisten dengan nilai hipotesis awal. Median populasi dianggap sama dengan 0 (p ≥ α)."),
+               "Wilcoxon Paired Signed-Rank" = paste("Tidak ditemukan perbedaan nilai yang berarti secara berpasangan antara kedua kondisi/waktu pengukuran (p ≥ α)."),
+               "Friedman Test" = paste("Seluruh variasi kondisi berpasangan terbukti menghasilkan bentuk sebaran nilai yang relatif homogen/sama (p ≥ α)."),
+               "Spearman Correlation" = paste("Tidak ada ikatan korelasi monoton yang cukup kuat atau bermakna secara statistik (p ≥ α)."),
+               "Kruskal-Wallis" = paste("Seluruh kelompok sampel independen yang diuji dianggap berasal dari sebaran populasi yang setara/sama (p ≥ α)."),
+               "Kendall's Tau" = paste("Hubungan kebersesuaian ordinal antar pasangan peringkat tergolong sangat lemah atau tidak nyata (p ≥ α)."),
+               "Runs Test (Wald-Wolfowitz)" = paste("Urutan kemunculan data terbukti acak secara statistik (p ≥ α). Asumsi keacakan terpenuhi."),
+               "Hasil tidak signifikan."
+        )
+      }
+    }
+    
+    items <- lapply(names(res), function(nm) {
+      r <- res[[nm]]; icon <- if (r$sig) "✅" else "❌"; verd <- if (r$sig) "TOLAK HIPOTESIS NOL (H₀)" else "GAGAL MENOLAK HIPOTESIS NOL (H₀)"
+      div(class = if(r$sig) "card-sig" else "card-not",
+          h4(paste(icon, nm), style = "margin-top:0; color:#1a2e4a;"),
+          p(strong("📝 Kesimpulan Naratif: "), make_conclusion(nm, r)),
+          div(style = "font-size:13px; font-weight:bold;", paste0(icon, "  Keputusan: ", verd, " pada α = ", alpha))
+      )
+    })
+    tagList(hdr, br(), do.call(tagList, items))
+  })
+  
 }
 
 shinyApp(ui, server)
