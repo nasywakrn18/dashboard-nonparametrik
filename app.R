@@ -523,6 +523,93 @@ server <- function(input, output, session){  # ---- 1. Load Data ----
       }
     }
     list(results = results, alpha = alpha, vars = vars, metode = metode)
+  })
+  # ---- 8. Reshape Data for Graphics Dinamis ----
+  plot_df <- reactive({
+    req(raw_data(), data_inputs())
+    df <- raw_data(); vars <- data_inputs()
+    out <- data.frame(y_val = numeric(), grp = factor())
+    
+    if (vars$type == "1-sample") {
+      y <- suppressWarnings(as.numeric(df[[vars$y_name]])); ok <- !is.na(y)
+      out <- data.frame(y_val = y[ok], grp = factor(rep("Sampel Uji", sum(ok))))
+    } else if (vars$type == "independent") {
+      y <- suppressWarnings(as.numeric(df[[vars$y_name]])); x <- as.character(df[[vars$x_name]])
+      ok <- !is.na(y) & !is.na(x) & x != ""
+      out <- data.frame(y_val = y[ok], grp = as.factor(x[ok]))
+    } else if (vars$type == "paired-2") {
+      y1 <- suppressWarnings(as.numeric(df[[vars$y_name]])); y2 <- suppressWarnings(as.numeric(df[[vars$y2_name]]))
+      ok <- !is.na(y1) & !is.na(y2)
+      out <- data.frame(y_val = c(y1[ok], y2[ok]), grp = as.factor(c(rep(vars$y_name, sum(ok)), rep(vars$y2_name, sum(ok)))))
+    } else if (vars$type == "paired-k") {
+      req(length(vars$k_names) >= 2)
+      long_list <- lapply(vars$k_names, function(nm) {
+        y <- suppressWarnings(as.numeric(df[[nm]]))
+        data.frame(y_val = y, grp = nm)
+      })
+      out <- do.call(rbind, long_list)
+      out <- out[!is.na(out$y_val), ]; out$grp <- as.factor(out$grp)
+    } else if (vars$type == "correlation") {
+      y1 <- suppressWarnings(as.numeric(df[[vars$x_name]])); y2 <- suppressWarnings(as.numeric(df[[vars$y_name]]))
+      ok <- !is.na(y1) & !is.na(y2)
+      out <- data.frame(y_val = c(y1[ok], y2[ok]), grp = as.factor(c(rep(vars$x_name, sum(ok)), rep(vars$y_name, sum(ok)))))
+    }
+    return(out)
+  })
+  
+  # ---- 9. PLOTS ----
+  output$plot_box <- renderPlot({
+    req(plot_df())
+    ggplot(plot_df(), aes(x = grp, y = y_val, fill = grp)) +
+      geom_boxplot(alpha = 0.75, outlier.colour = "#c0392b", outlier.size = 2.5) +
+      scale_fill_brewer(palette = PALETTE) + labs(title = "Boxplot Distribusi", x = "Grup", y = "Nilai") + theme_custom()
+  })
+  
+  output$plot_violin <- renderPlot({
+    req(plot_df())
+    ggplot(plot_df(), aes(x = grp, y = y_val, fill = grp)) +
+      geom_violin(trim = FALSE, alpha = 0.6) + geom_boxplot(width = 0.1, fill = "white", outlier.size = 0) +
+      geom_jitter(width = 0.05, alpha = 0.2, size = 1.5) + scale_fill_brewer(palette = "Set1") +
+      labs(title = "Violin Plot & Jitter Data", x = "Grup", y = "Nilai") + theme_custom()
+  })
+  
+  output$plot_scatter <- renderPlot({
+    req(raw_data(), data_inputs())
+    vars <- data_inputs(); df <- raw_data()
+    
+    if (vars$type == "correlation") { x_c <- vars$x_name; y_c <- vars$y_name
+    } else if (vars$type == "paired-2") { x_c <- vars$y_name; y_c <- vars$y2_name
+    } else { return(ggplot() + annotate("text", x = 0.5, y = 0.5, label = "Scatter plot hanya untuk Korelasi / 2 Sampel Berpasangan") + theme_void()) }
+    
+    df$x_v <- suppressWarnings(as.numeric(df[[x_c]])); df$y_v <- suppressWarnings(as.numeric(df[[y_c]]))
+    df <- df[!is.na(df$x_v) & !is.na(df$y_v), ]
+    
+    ggplot(df, aes(x = x_v, y = y_v)) + geom_point(alpha = 0.6, colour = "#2980b9", size = 2.5) +
+      geom_smooth(method = "lm", formula = y ~ x, colour = "#e74c3c", fill = "#ffcdd2", alpha = 0.2) +
+      labs(title = "Scatter Plot Hubungan Pasangan Variabel", x = x_c, y = y_c) + theme_custom()
+  })
+  
+  output$plot_density <- renderPlot({
+    req(plot_df())
+    ggplot(plot_df(), aes(x = y_val, fill = grp, colour = grp)) +
+      geom_histogram(aes(y = after_stat(density)), alpha = 0.25, bins = 15, position = "identity") +
+      geom_density(alpha = 0.1, linewidth = 1.0) + scale_fill_brewer(palette = PALETTE) + labs(title = "Kurva Densitas", x = "Nilai", y = "Kerapatan") + theme_custom()
+  })
+  
+  output$plot_rank <- renderPlot({
+    req(plot_df())
+    df <- plot_df(); df$rnk <- rank(df$y_val)
+    ggplot(df, aes(x = grp, y = rnk, fill = grp)) + geom_boxplot(alpha = 0.7) +
+      scale_fill_brewer(palette = "Pastel1") + labs(title = "Distribusi Nilai Rank (Peringkat)", x = "Grup", y = "Rank") + theme_custom()
+  })
+  
+  output$plot_means <- renderPlot({
+    req(plot_df())
+    summ <- plot_df() %>% group_by(grp) %>% summarise(mn = mean(y_val, na.rm=T), sd = sd(y_val, na.rm=T), med = median(y_val, na.rm=T), .groups = "drop")
+    ggplot(summ, aes(x = grp, y = mn, fill = grp)) + geom_col(alpha = 0.8, width = 0.5) +
+      geom_errorbar(aes(ymin = mn - sd, ymax = mn + sd), width = 0.2, linewidth = 0.8) +
+      geom_point(aes(y = med), shape = 23, size = 4, fill = "white") +
+      scale_fill_brewer(palette = "Set3") + labs(title = "Mean ± 1 SD (♦ = Median)", x = "Grup", y = "Mean / Rata-rata") + theme_custom()
   })  
 }
 
