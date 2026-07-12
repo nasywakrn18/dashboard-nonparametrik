@@ -50,12 +50,3 @@ https://kompstat.shinyapps.io/dashboard-non-parametrik/
 
 ## Link Repository GitHub:
 https://github.com/nasywakrn18/dashboard-nonparametrik
-
-## Struktur Repository
-Repository ini berisi source code aplikasi R Shiny dan file pendukung project.
-
-```text
-dashboard-nonparametrik/
-├── app.R
-├── README.md
-└── .gitignore
