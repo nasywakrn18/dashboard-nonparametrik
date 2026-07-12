@@ -79,7 +79,7 @@ ui <- dashboardPage(
         
         hr(style = "border-color:#2c4f7c; margin:12px 0;"),
         
-        # --- Dynamic Variable Input (SEKARANG DINAMIS MENGIKUTI SAMPEL) ---
+        # --- Dynamic Variable Input ---
         div(class = "sidebar-section-title", "📌 Pilih Variabel"),
         uiOutput("dynamic_variables_ui"),
         
